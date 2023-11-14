@@ -109,30 +109,18 @@ public class AdaptiveChargingManager {
     }
 
     public boolean setAdaptiveChargingDeadline(int secondsFromNow) {
-        IBinder.DeathRecipient deathRecipient = new IBinder.DeathRecipient() {
-           @Override
-            public final void binderDied() {
-                if (DEBUG) {
-                    Log.d("AdaptiveChargingManager", "serviceDied");
-                }
-                adaptiveChargingStatusReceiver.onDestroyInterface();
-            }
-        };
-        IGoogleBattery initHalInterface = null;
-        if(mHasSystemFeature) {
-            initHalInterface = GoogleBatteryManager.initHalInterface(deathRecipient);
-        }
-        if (initHalInterface == null) {
+        IGoogleBattery googBatteryInterface = initHalInterface(null);
+        if (googBatteryInterface == null) {
             return false;
         }
         boolean result = false;
         try {
-            initHalInterface.setChargingDeadline(secondsFromNow);
+            googBatteryInterface.setChargingDeadline(secondsFromNow);
             result = true;
         } catch (RemoteException e) {
             Log.e(TAG, "setChargingDeadline() failed");
         }
-        GoogleBatteryManager.destroyHalInterface(initHalInterface, deathRecipient);
+        destroyHalInterface(googBatteryInterface, null);
         return result;
     }
 
@@ -146,21 +134,47 @@ public class AdaptiveChargingManager {
                 adaptiveChargingStatusReceiver.onDestroyInterface();
             }
         };
-        IGoogleBattery initHalInterface = null;
-        if(mHasSystemFeature) {
-            initHalInterface = GoogleBatteryManager.initHalInterface(deathRecipient);
-        }
-        if (initHalInterface == null) {
+        IGoogleBattery googBatteryIntf = initHalInterface(deathRecipient);
+        if (googBatteryIntf == null) {
             adaptiveChargingStatusReceiver.onDestroyInterface();
             return;
         }
         try {
-            ChargingStage stage = initHalInterface.getChargingStageAndDeadline();
+            ChargingStage stage = googBatteryIntf.getChargingStageAndDeadline();
             adaptiveChargingStatusReceiver.onReceiveStatus(stage.deadlineSecs, stage.stage);
         } catch (RemoteException | ParcelFormatException e) {
             Log.e("AdaptiveChargingManager", "Failed to get Adaptive Charging status: ", e);
         }
-        GoogleBatteryManager.destroyHalInterface(initHalInterface, deathRecipient);
+        destroyHalInterface(googBatteryIntf, deathRecipient);
         adaptiveChargingStatusReceiver.onDestroyInterface();
+    }
+
+    private static void destroyHalInterface(IGoogleBattery iGoogleBattery, IBinder.DeathRecipient deathRecipient) {
+        if (DEBUG) {
+            Log.d("AdaptiveChargingManager", "destroyHalInterface");
+        }
+        if (deathRecipient != null && iGoogleBattery != null) {
+            iGoogleBattery.asBinder().unlinkToDeath(deathRecipient, 0);
+        }
+    }
+
+    private static IGoogleBattery initHalInterface(IBinder.DeathRecipient deathReceiver) {
+        if (DEBUG) {
+            Log.d("AdaptiveChargingManager", "initHalInterface");
+        }
+        try {
+            IBinder binder = ServiceManager.getService("vendor.google.google_battery.IGoogleBattery");
+            IGoogleBattery batteryInterface = null;
+            if (binder != null) {
+                batteryInterface = IGoogleBattery.Stub.asInterface(binder);
+                if (batteryInterface != null && deathReceiver != null) {
+                    binder.linkToDeath(deathReceiver, 0);
+                }
+            }
+            return batteryInterface;
+        } catch (RemoteException | NoSuchElementException | SecurityException e) {
+            Log.e("AdaptiveChargingManager", "Failed to get Google Battery HAL: ", e);
+            return null;
+        }
     }
 }
